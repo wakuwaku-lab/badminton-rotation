@@ -13,6 +13,7 @@ const I18N = {
     showIds: '显示编号',
     hideIds: '隐藏编号',
     reInput: '重新输入',
+    confirmReset: '确定要重新输入吗？所有比赛记录将被清除。',
     round: (n) => `第 ${n} 场`,
     teamA: 'A队',
     teamB: 'B队',
@@ -48,6 +49,7 @@ const I18N = {
     showIds: '番号表示',
     hideIds: '番号非表示',
     reInput: '再入力',
+    confirmReset: 'リセットしますか？試合記録がすべて削除されます。',
     round: (n) => `第 ${n} 試合`,
     teamA: 'Aチーム',
     teamB: 'Bチーム',
@@ -83,6 +85,7 @@ const I18N = {
     showIds: 'Show IDs',
     hideIds: 'Hide IDs',
     reInput: 'Reset',
+    confirmReset: 'Reset all data? All match records will be lost.',
     round: (n) => `Round ${n}`,
     teamA: 'Team A',
     teamB: 'Team B',
@@ -533,7 +536,7 @@ export default function App() {
                 </span>
               ))}
             </div>
-            <button className="btn btn-reset" onClick={() => { setPlayers([]); setHistory([]); setCurrentMatch(null) }}>
+            <button className="btn btn-reset" onClick={() => { if (window.confirm(t.confirmReset)) { setPlayers([]); setHistory([]); setCurrentMatch(null) } }}>
               {t.reInput}
             </button>
           </div>
