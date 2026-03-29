@@ -1,4 +1,24 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+
+const API_URL = 'https://exia-lion-dev-ed.my.site.com/api/services/apexrest/exia/booking'
+const API_TOKEN = '0a26af12a8e2dff9ba4309390683f478'
+
+async function apiPost(payload) {
+  console.log('[apiPost]', JSON.stringify(payload, null, 2))
+  const res = await fetch(`${API_URL}?token=${API_TOKEN}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const json = await res.json()
+  console.log('[apiPost response]', json)
+  return json
+}
+
+async function apiGet(hash) {
+  const res = await fetch(`${API_URL}?token=${API_TOKEN}&hash=${hash}`)
+  return res.json()
+}
 
 const I18N = {
   zh: {
@@ -232,7 +252,10 @@ function InputParser({ onParse, t }) {
   const handleParse = () => {
     const players = parsePlayers(text)
     if (players.length >= 4 && players.length <= 8) {
-      onParse(players, ordered)
+      const extra = text.trim().split('\n')
+        .filter(line => line.trim() && !line.trim().match(/^(\d+)[.．]\s*.+$/))
+        .join('\n')
+      onParse(players, ordered, text, extra)
     } else {
       alert(t.alertMsg(players.length))
     }
@@ -259,24 +282,34 @@ function InputParser({ onParse, t }) {
   )
 }
 
-function CurrentMatch({ players, match, onRecordResult, onNextMatch, showIds, t }) {
+function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, showIds, t }) {
   if (!match) return null
+  const [slide, setSlide] = useState(0) // 0=current, 1=next
 
   const getName = (id) => {
     const p = players.find(p => p.id === id)
     return p ? (showIds ? `${p.id}.${p.name}` : p.name) : ''
   }
 
+  const displayed = slide === 1 && nextMatch ? nextMatch : match
+  const isPreview = slide === 1 && nextMatch
+
   return (
     <div className="card">
       <div className="match-info">
-        <div className="round-number">{t.round(match.round)}</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => setSlide(0)} disabled={slide === 0}>‹</button>
+          <div className="round-number" style={{ margin: 0 }}>
+            {isPreview ? `${t.round(displayed.round)} (preview)` : t.round(displayed.round)}
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={() => setSlide(1)} disabled={slide === 1 || !nextMatch}>›</button>
+        </div>
 
         <div className="teams">
           <div className="team team-a">
             <div className="team-label">{t.teamA}</div>
             <div className="players">
-              {match.teamA.map(pid => (
+              {displayed.teamA.map(pid => (
                 <div key={pid} className="player">{getName(pid)}</div>
               ))}
             </div>
@@ -284,41 +317,37 @@ function CurrentMatch({ players, match, onRecordResult, onNextMatch, showIds, t 
           <div className="team team-b">
             <div className="team-label">{t.teamB}</div>
             <div className="players">
-              {match.teamB.map(pid => (
+              {displayed.teamB.map(pid => (
                 <div key={pid} className="player">{getName(pid)}</div>
               ))}
             </div>
           </div>
         </div>
 
-        <div className="result-buttons">
-          <button
-            className={`btn result-btn btn-a-win ${match.result === 'A_win' ? 'selected' : ''}`}
-            onClick={() => onRecordResult('A_win')}
-          >
-            {t.aWin}
+        {!isPreview && <>
+          <div className="result-buttons">
+            <button
+              className={`btn result-btn btn-a-win ${match.result === 'A_win' ? 'selected' : ''}`}
+              onClick={() => onRecordResult('A_win')}
+            >{t.aWin}</button>
+            <button
+              className={`btn result-btn btn-b-win ${match.result === 'B_win' ? 'selected' : ''}`}
+              onClick={() => onRecordResult('B_win')}
+            >{t.bWin}</button>
+          </div>
+          <div className="score-input">
+            <span>{t.score}</span>
+            <input
+              type="text"
+              value={match.score || ''}
+              onChange={e => onRecordResult(match.result, e.target.value)}
+              placeholder={t.scorePlaceholder}
+            />
+          </div>
+          <button className="btn btn-secondary" onClick={() => { onNextMatch(); setSlide(0) }} style={{ marginTop: 20 }}>
+            {t.nextMatch}
           </button>
-          <button
-            className={`btn result-btn btn-b-win ${match.result === 'B_win' ? 'selected' : ''}`}
-            onClick={() => onRecordResult('B_win')}
-          >
-            {t.bWin}
-          </button>
-        </div>
-
-        <div className="score-input">
-          <span>{t.score}</span>
-          <input
-            type="text"
-            value={match.score || ''}
-            onChange={e => onRecordResult(match.result, e.target.value)}
-            placeholder={t.scorePlaceholder}
-          />
-        </div>
-
-        <button className="btn btn-secondary" onClick={onNextMatch} style={{ marginTop: 20 }}>
-          {t.nextMatch}
-        </button>
+        </>}
       </div>
     </div>
   )
@@ -411,36 +440,56 @@ function MatchHistory({ players, history, onUpdateHistory, showIds, t }) {
 }
 
 function PlayerStats({ stats, showIds, t }) {
+  const [viewMode, setViewMode] = useState('table')
+  const getName = s => showIds ? `${s.id}.${s.name}` : s.name
+
   return (
     <div className="card">
-      <h2>{t.stats}</h2>
-      <div className="stats-grid">
-        {stats.map(s => (
-          <div key={s.id} className="stat-card">
-            <div className="stat-name">{showIds ? `${s.id}.${s.name}` : s.name}</div>
-            <div className="stat-row">
-              <span className="stat-label">{t.appearances}</span>
-              <span className="stat-value">{s.appearances}</span>
-            </div>
-            <div className="stat-row">
-              <span className="stat-label">{t.wins}</span>
-              <span className="stat-value">{s.wins}</span>
-            </div>
-            <div className="stat-row">
-              <span className="stat-label">{t.losses}</span>
-              <span className="stat-value">{s.losses}</span>
-            </div>
-            {s.appearances > 0 && (
-              <div className="stat-row">
-                <span className="stat-label">{t.winRate}</span>
-                <span className="stat-value win-rate">
-                  {Math.round(s.wins / s.appearances * 100)}%
-                </span>
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="card-header">
+        <h2>{t.stats}</h2>
+        <button className="btn btn-secondary btn-sm" onClick={() => setViewMode(v => v === 'table' ? 'grid' : 'table')}>
+          {viewMode === 'table' ? '☰' : '⊞'}
+        </button>
       </div>
+
+      {viewMode === 'table' ? (
+        <table className="history-table">
+          <thead>
+            <tr>
+              <th>名前</th>
+              <th>{t.appearances}</th>
+              <th>{t.wins}</th>
+              <th>{t.losses}</th>
+              <th>{t.winRate}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.map(s => (
+              <tr key={s.id}>
+                <td>{getName(s)}</td>
+                <td>{s.appearances}</td>
+                <td>{s.wins}</td>
+                <td>{s.losses}</td>
+                <td>{s.appearances > 0 ? `${Math.round(s.wins / s.appearances * 100)}%` : '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="stats-grid">
+          {stats.map(s => (
+            <div key={s.id} className="stat-card">
+              <div className="stat-name">{getName(s)}</div>
+              <div className="stat-row"><span className="stat-label">{t.appearances}</span><span className="stat-value">{s.appearances}</span></div>
+              <div className="stat-row"><span className="stat-label">{t.wins}</span><span className="stat-value">{s.wins}</span></div>
+              <div className="stat-row"><span className="stat-label">{t.losses}</span><span className="stat-value">{s.losses}</span></div>
+              {s.appearances > 0 && (
+                <div className="stat-row"><span className="stat-label">{t.winRate}</span><span className="stat-value win-rate">{Math.round(s.wins / s.appearances * 100)}%</span></div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -450,23 +499,80 @@ export default function App() {
   const [history, setHistory] = useState([])
   const [currentMatch, setCurrentMatch] = useState(null)
   const [round, setRound] = useState(0)
-  const [showIds, setShowIds] = useState(false)
+  const [showIds, setShowIds] = useState(true)
   const [ordered, setOrdered] = useState(true)
   const [lang, setLang] = useState('zh')
+  const [bookingHash, setBookingHash] = useState(null)
+  const [bookingUpdatedAt, setBookingUpdatedAt] = useState(null)
+  const [bookingData0, setBookingData0] = useState(null)
+  const [extra, setExtra] = useState('')
+  const [playerTab, setPlayerTab] = useState('players')
 
   const t = I18N[lang]
 
-  const handleParse = (parsedPlayers, isOrdered) => {
+  const restoreFromResp = (resp, isOrdered) => {
+    if (!resp.hash) return false
+    let restoredHistory = []
+    let restoredPlayers = []
+    try {
+      const saved = JSON.parse(resp.data)
+      if (Array.isArray(saved.history)) restoredHistory = saved.history
+      if (Array.isArray(saved.players)) restoredPlayers = saved.players
+      if (saved.type) setOrdered(saved.type === 'ordered')
+      if (saved.extra) setExtra(saved.extra)
+    } catch (_) {}
+    setPlayers(restoredPlayers)
+    setHistory(restoredHistory)
+    setBookingHash(resp.hash)
+    setBookingUpdatedAt(resp.updatedAt)
+    setBookingData0(resp.data0 || null)
+    const lastMatch = restoredHistory.length > 0 ? restoredHistory[restoredHistory.length - 1] : null
+    const nextMatch = generateNextMatch(
+      restoredPlayers, restoredHistory,
+      lastMatch ? { onField: lastMatch.onField, rested: lastMatch.rested } : null,
+      isOrdered
+    )
+    if (nextMatch) {
+      const newRound = restoredHistory.length + 1
+      setRound(newRound)
+      setCurrentMatch({ round: newRound, ...nextMatch, result: null, score: '' })
+    }
+    return true
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const hash = params.get('hash')
+    if (!hash) return
+    apiGet(hash).then(resp => restoreFromResp(resp, true))
+  }, [])
+
+  const handleParse = async (parsedPlayers, isOrdered, rawText, extraText) => {
     setOrdered(isOrdered)
-    setPlayers(parsedPlayers)
     setHistory([])
     setRound(0)
     setCurrentMatch(null)
+    setBookingHash(null)
+    setBookingUpdatedAt(null)
+    setBookingData0(null)
+    setExtra(extraText || '')
 
-    const firstMatch = generateNextMatch(parsedPlayers, [], null, isOrdered)
-    if (firstMatch) {
-      setRound(1)
-      setCurrentMatch({ round: 1, ...firstMatch, result: null, score: '' })
+    const data0 = JSON.stringify({ players: rawText.trim(), type: isOrdered ? 'ordered' : 'random' })
+
+    const resp = await apiPost({
+      type: 'badminton-rotation',
+      data0,
+      data: JSON.stringify({ players: parsedPlayers, type: isOrdered ? 'ordered' : 'random', history: [], extra: extraText || '' }),
+      ua: navigator.userAgent,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      fingerprint: navigator.userAgent + screen.width + screen.height,
+    })
+
+    if (restoreFromResp(resp, isOrdered)) {
+      // update URL
+      const url = new URL(window.location)
+      url.searchParams.set('hash', resp.hash)
+      window.history.replaceState({}, '', url)
     }
   }
 
@@ -479,11 +585,26 @@ export default function App() {
     }))
   }
 
-  const handleUpdateHistory = (round, { result, score }) => {
-    setHistory(prev => prev.map(m => m.round === round ? { ...m, result: result || null, score } : m))
+  const handleUpdateHistory = async (round, { result, score }) => {
+    const newHistory = history.map(m => m.round === round ? { ...m, result: result || null, score } : m)
+    setHistory(newHistory)
+    if (bookingHash && bookingUpdatedAt) {
+      const data = JSON.stringify({ players, type: ordered ? 'ordered' : 'random', history: newHistory, extra })
+      const resp = await apiPost({
+        type: 'badminton-rotation',
+        data0: bookingData0,
+        data,
+        ua: navigator.userAgent,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        fingerprint: navigator.userAgent + screen.width + screen.height,
+        hash: bookingHash,
+        updatedAt: bookingUpdatedAt,
+      })
+      if (resp.updatedAt) setBookingUpdatedAt(resp.updatedAt)
+    }
   }
 
-  const handleNextMatch = () => {
+  const handleNextMatch = async () => {
     if (!currentMatch) return
 
     const rested = players.map(p => p.id).filter(id => !currentMatch.onField.includes(id))
@@ -492,12 +613,36 @@ export default function App() {
 
     const nextMatch = generateNextMatch(players, newHistory, { onField: currentMatch.onField, rested }, ordered)
     if (nextMatch) {
-      setRound(round + 1)
-      setCurrentMatch({ round: round + 1, ...nextMatch, result: null, score: '' })
+      const newRound = round + 1
+      setRound(newRound)
+      setCurrentMatch({ round: newRound, ...nextMatch, result: null, score: '' })
+    }
+
+    if (bookingHash && bookingUpdatedAt) {
+      const data = JSON.stringify({ players, type: ordered ? 'ordered' : 'random', history: newHistory, extra })
+      const resp = await apiPost({
+        type: 'badminton-rotation',
+        data0: bookingData0,
+        data,
+        ua: navigator.userAgent,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        fingerprint: navigator.userAgent + screen.width + screen.height,
+        hash: bookingHash,
+        updatedAt: bookingUpdatedAt,
+      })
+      if (resp.updatedAt) setBookingUpdatedAt(resp.updatedAt)
     }
   }
 
   const stats = useMemo(() => getStats(players, history), [players, history])
+
+  const previewNextMatch = useMemo(() => {
+    if (!currentMatch || players.length === 0) return null
+    const rested = players.map(p => p.id).filter(id => !currentMatch.onField.includes(id))
+    const tempHistory = [...history, { ...currentMatch, rested }]
+    const nm = generateNextMatch(players, tempHistory, { onField: currentMatch.onField, rested }, ordered)
+    return nm ? { round: round + 1, ...nm } : null
+  }, [currentMatch, history, players, ordered, round])
 
   return (
     <div className="container">
@@ -524,18 +669,33 @@ export default function App() {
         <>
           <div className="card">
             <div className="card-header">
-              <h2>{t.playerList(players.length)}</h2>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button
+                  className={`btn btn-sm ${playerTab === 'players' ? '' : 'btn-secondary'}`}
+                  onClick={() => setPlayerTab('players')}
+                >{t.playerList(players.length)}</button>
+                {extra && (
+                  <button
+                    className={`btn btn-sm ${playerTab === 'extra' ? '' : 'btn-secondary'}`}
+                    onClick={() => setPlayerTab('extra')}
+                  >📋</button>
+                )}
+              </div>
               <button className="btn btn-secondary btn-sm" onClick={() => setShowIds(v => !v)}>
                 {showIds ? t.hideIds : t.showIds}
               </button>
             </div>
-            <div className="player-list">
-              {players.map(p => (
-                <span key={p.id} className="player-tag">
-                  {showIds && <span className="player-id">{p.id}.</span>}{p.name}
-                </span>
-              ))}
-            </div>
+            {playerTab === 'players' ? (
+              <div className="player-list">
+                {players.map(p => (
+                  <span key={p.id} className="player-tag">
+                    {showIds && <span className="player-id">{p.id}.</span>}{p.name}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div style={{ whiteSpace: 'pre-line', padding: '8px 0', color: '#444' }}>{extra}</div>
+            )}
             <button className="btn btn-reset" onClick={() => { if (window.confirm(t.confirmReset)) { setPlayers([]); setHistory([]); setCurrentMatch(null) } }}>
               {t.reInput}
             </button>
@@ -544,6 +704,7 @@ export default function App() {
           <CurrentMatch
             players={players}
             match={currentMatch}
+            nextMatch={previewNextMatch}
             onRecordResult={handleRecordResult}
             onNextMatch={handleNextMatch}
             showIds={showIds}
