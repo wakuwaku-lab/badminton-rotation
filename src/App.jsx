@@ -1,18 +1,15 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 
 const API_URL = 'https://exia-lion-dev-ed.my.site.com/api/services/apexrest/exia/booking'
 const API_TOKEN = '0a26af12a8e2dff9ba4309390683f478'
 
 async function apiPost(payload) {
-  console.log('[apiPost]', JSON.stringify(payload, null, 2))
   const res = await fetch(`${API_URL}?token=${API_TOKEN}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  const json = await res.json()
-  console.log('[apiPost response]', json)
-  return json
+  return res.json()
 }
 
 async function apiGet(hash) {
@@ -245,7 +242,7 @@ function getStats(players, history) {
   return Object.values(stats).sort((a, b) => b.appearances - a.appearances)
 }
 
-function InputParser({ onParse, t }) {
+function InputParser({ onParse, loading, t }) {
   const [text, setText] = useState('')
   const [ordered, setOrdered] = useState(true)
 
@@ -277,12 +274,12 @@ function InputParser({ onParse, t }) {
           <input type="radio" checked={!ordered} onChange={() => setOrdered(false)} /> {t.random}
         </label>
       </div>
-      <button className="btn" onClick={handleParse}>{t.start}</button>
+      <button className="btn" onClick={handleParse} disabled={loading}>{loading ? '...' : t.start}</button>
     </div>
   )
 }
 
-function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, showIds, t }) {
+function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, showIds, loading, t }) {
   if (!match) return null
   const [slide, setSlide] = useState(0) // 0=current, 1=next
 
@@ -344,8 +341,8 @@ function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, 
               placeholder={t.scorePlaceholder}
             />
           </div>
-          <button className="btn btn-secondary" onClick={() => { onNextMatch(); setSlide(0) }} style={{ marginTop: 20 }}>
-            {t.nextMatch}
+          <button className="btn btn-secondary" onClick={() => { onNextMatch(); setSlide(0) }} style={{ marginTop: 20 }} disabled={loading}>
+            {loading ? '...' : t.nextMatch}
           </button>
         </>}
       </div>
@@ -507,6 +504,8 @@ export default function App() {
   const [bookingData0, setBookingData0] = useState(null)
   const [extra, setExtra] = useState('')
   const [playerTab, setPlayerTab] = useState('players')
+  const [loading, setLoading] = useState(false)
+  const bookingUpdatedAtRef = useRef(null)
 
   const t = I18N[lang]
 
@@ -547,7 +546,25 @@ export default function App() {
     apiGet(hash).then(resp => restoreFromResp(resp, true))
   }, [])
 
+  // keep ref in sync so polling can read latest value without stale closure
+  useEffect(() => { bookingUpdatedAtRef.current = bookingUpdatedAt }, [bookingUpdatedAt])
+
+  // auto-polling: refresh when another client updates the record
+  useEffect(() => {
+    if (!bookingHash) return
+    const id = setInterval(async () => {
+      if (loading) return
+      const resp = await apiGet(bookingHash)
+      if (resp.updatedAt && resp.updatedAt !== bookingUpdatedAtRef.current) {
+        restoreFromResp(resp, ordered)
+      }
+    }, 10000)
+    return () => clearInterval(id)
+  }, [bookingHash, ordered])
+
   const handleParse = async (parsedPlayers, isOrdered, rawText, extraText) => {
+    if (loading) return
+    setLoading(true)
     setOrdered(isOrdered)
     setHistory([])
     setRound(0)
@@ -574,6 +591,7 @@ export default function App() {
       url.searchParams.set('hash', resp.hash)
       window.history.replaceState({}, '', url)
     }
+    setLoading(false)
   }
 
   const handleRecordResult = (result, score) => {
@@ -586,6 +604,8 @@ export default function App() {
   }
 
   const handleUpdateHistory = async (round, { result, score }) => {
+    if (loading) return
+    setLoading(true)
     const newHistory = history.map(m => m.round === round ? { ...m, result: result || null, score } : m)
     setHistory(newHistory)
     if (bookingHash && bookingUpdatedAt) {
@@ -602,10 +622,12 @@ export default function App() {
       })
       if (resp.updatedAt) setBookingUpdatedAt(resp.updatedAt)
     }
+    setLoading(false)
   }
 
   const handleNextMatch = async () => {
-    if (!currentMatch) return
+    if (!currentMatch || loading) return
+    setLoading(true)
 
     const rested = players.map(p => p.id).filter(id => !currentMatch.onField.includes(id))
     const newHistory = [...history, { ...currentMatch, rested }]
@@ -632,6 +654,7 @@ export default function App() {
       })
       if (resp.updatedAt) setBookingUpdatedAt(resp.updatedAt)
     }
+    setLoading(false)
   }
 
   const stats = useMemo(() => getStats(players, history), [players, history])
@@ -662,7 +685,7 @@ export default function App() {
       </header>
 
       {players.length === 0 && (
-        <InputParser onParse={handleParse} t={t} />
+        <InputParser onParse={handleParse} loading={loading} t={t} />
       )}
 
       {players.length > 0 && (
@@ -708,6 +731,7 @@ export default function App() {
             onRecordResult={handleRecordResult}
             onNextMatch={handleNextMatch}
             showIds={showIds}
+            loading={loading}
             t={t}
           />
 
