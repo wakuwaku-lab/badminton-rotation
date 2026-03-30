@@ -1,7 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import FingerprintJS from '@fingerprintjs/fingerprintjs'
 
 const API_URL = 'https://exia-lion-dev-ed.my.site.com/api/services/apexrest/exia/booking'
 const API_TOKEN = '0a26af12a8e2dff9ba4309390683f478'
+
+let fpPromise = null
 
 async function apiPost(payload) {
   const res = await fetch(`${API_URL}?token=${API_TOKEN}`, {
@@ -279,9 +282,10 @@ function InputParser({ onParse, loading, t }) {
   )
 }
 
-function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, showIds, loading, t }) {
+function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, showIds, loading, t, isDone, lang }) {
   if (!match) return null
   const [slide, setSlide] = useState(0) // 0=current, 1=next
+  const [speaking, setSpeaking] = useState(false)
 
   const getName = (id) => {
     const p = players.find(p => p.id === id)
@@ -289,6 +293,61 @@ function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, 
   }
 
   const displayed = slide === 1 && nextMatch ? nextMatch : match
+
+  const getNameForTts = (id) => {
+    const p = players.find(p => p.id === id)
+    return p ? p.name : ''
+  }
+
+  const speakMatch = () => {
+    if (speaking) {
+      window.speechSynthesis.cancel()
+      setSpeaking(false)
+      return
+    }
+    const roundNum = displayed.round
+    const namesA = displayed.teamA.map(getNameForTts).join(lang === 'ja' ? '・' : ' ')
+    const namesB = displayed.teamB.map(getNameForTts).join(lang === 'ja' ? '・' : ' ')
+    
+    let text
+    if (lang === 'zh') {
+      text = `第${roundNum}场，A队${displayed.teamA.map(getNameForTts).join('选手、')}选手，对阵B队${displayed.teamB.map(getNameForTts).join('选手、')}选手。`
+    } else if (lang === 'ja') {
+      text = `第${roundNum}試合、ただいまより、試合を開始いたします。Aチーム、${displayed.teamA.map(getNameForTts).join('選手・')}。Bチーム、${displayed.teamB.map(getNameForTts).join('選手・')}。`
+    } else {
+      text = `Round ${roundNum}. Up next is the badminton doubles match. Team A: ${namesA}, versus Team B: ${namesB}.`
+    }
+    
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = lang === 'zh' ? 'zh-CN' : lang === 'ja' ? 'ja-JP' : 'en-US'
+    utterance.rate = 0.9
+    utterance.onstart = () => setSpeaking(true)
+    utterance.onend = () => setSpeaking(false)
+    utterance.onerror = () => setSpeaking(false)
+    window.speechSynthesis.speak(utterance)
+  }
+
+  const handleRecordResult = (result) => {
+    if (isDone) return
+    onRecordResult(result)
+    if (result) {
+      const roundNum = match.round
+      const teamName = result === 'A_win' ? t.teamA : t.teamB
+      let text
+      if (lang === 'zh') {
+        text = `第${roundNum}场比赛，${teamName}胜利。`
+      } else if (lang === 'ja') {
+        text = `第${roundNum}試合、${teamName}の勝利です。`
+      } else {
+        text = `Round ${roundNum}, ${teamName} wins.`
+      }
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = lang === 'zh' ? 'zh-CN' : lang === 'ja' ? 'ja-JP' : 'en-US'
+      utterance.rate = 0.9
+      window.speechSynthesis.speak(utterance)
+    }
+  }
+
   const isPreview = slide === 1 && nextMatch
 
   return (
@@ -325,11 +384,13 @@ function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, 
           <div className="result-buttons">
             <button
               className={`btn result-btn btn-a-win ${match.result === 'A_win' ? 'selected' : ''}`}
-              onClick={() => onRecordResult('A_win')}
+              onClick={() => handleRecordResult('A_win')}
+              disabled={isDone}
             >{t.aWin}</button>
             <button
               className={`btn result-btn btn-b-win ${match.result === 'B_win' ? 'selected' : ''}`}
-              onClick={() => onRecordResult('B_win')}
+              onClick={() => handleRecordResult('B_win')}
+              disabled={isDone}
             >{t.bWin}</button>
           </div>
           <div className="score-input">
@@ -339,18 +400,24 @@ function CurrentMatch({ players, match, nextMatch, onRecordResult, onNextMatch, 
               value={match.score || ''}
               onChange={e => onRecordResult(match.result, e.target.value)}
               placeholder={t.scorePlaceholder}
+              disabled={isDone}
             />
           </div>
-          <button className="btn btn-secondary" onClick={() => { onNextMatch(); setSlide(0) }} style={{ marginTop: 20 }} disabled={loading}>
-            {loading ? '...' : t.nextMatch}
-          </button>
+          <div style={{ marginTop: 20, display: 'flex', gap: 8, justifyContent: 'center' }}>
+            <button className="btn btn-secondary" onClick={speakMatch} disabled={isDone || speaking}>
+              {speaking ? '⏹' : '🔊'}
+            </button>
+            <button className="btn btn-secondary" onClick={() => { onNextMatch(); setSlide(0) }} disabled={loading || isDone}>
+              {loading ? '...' : t.nextMatch}
+            </button>
+          </div>
         </>}
       </div>
     </div>
   )
 }
 
-function MatchHistory({ players, history, onUpdateHistory, showIds, t }) {
+function MatchHistory({ players, history, onUpdateHistory, showIds, t, isDone }) {
   const [editingRound, setEditingRound] = useState(null)
   const [editValues, setEditValues] = useState({})
 
@@ -425,7 +492,7 @@ function MatchHistory({ players, history, onUpdateHistory, showIds, t }) {
                 {editingRound === match.round ? (
                   <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => saveEdit(match.round)}>✓</button>
                 ) : (
-                  <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => startEdit(match)}>✎</button>
+                  <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => startEdit(match)} disabled={isDone}>✎</button>
                 )}
               </td>
             </tr>
@@ -438,7 +505,35 @@ function MatchHistory({ players, history, onUpdateHistory, showIds, t }) {
 
 function PlayerStats({ stats, showIds, t }) {
   const [viewMode, setViewMode] = useState('table')
+  const [sortKey, setSortKey] = useState('appearances')
+  const [sortAsc, setSortAsc] = useState(false)
   const getName = s => showIds ? `${s.id}.${s.name}` : s.name
+
+  const sortedStats = useMemo(() => {
+    return [...stats].sort((a, b) => {
+      let aVal = a[sortKey]
+      let bVal = b[sortKey]
+      if (sortKey === 'winRate') {
+        aVal = a.appearances > 0 ? a.wins / a.appearances : 0
+        bVal = b.appearances > 0 ? b.wins / b.appearances : 0
+      }
+      return sortAsc ? aVal - bVal : bVal - aVal
+    })
+  }, [stats, sortKey, sortAsc])
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortAsc(!sortAsc)
+    } else {
+      setSortKey(key)
+      setSortAsc(false)
+    }
+  }
+
+  const SortIcon = ({ active, asc }) => {
+    if (!active) return <span style={{ opacity: 0.3 }}>↕</span>
+    return <span>{asc ? '↑' : '↓'}</span>
+  }
 
   return (
     <div className="card">
@@ -453,15 +548,25 @@ function PlayerStats({ stats, showIds, t }) {
         <table className="history-table">
           <thead>
             <tr>
-              <th>名前</th>
-              <th>{t.appearances}</th>
-              <th>{t.wins}</th>
-              <th>{t.losses}</th>
-              <th>{t.winRate}</th>
+              <th onClick={() => handleSort('name')} style={{ cursor: 'pointer' }}>
+                名前 <SortIcon active={sortKey === 'name'} asc={sortAsc} />
+              </th>
+              <th onClick={() => handleSort('appearances')} style={{ cursor: 'pointer' }}>
+                {t.appearances} <SortIcon active={sortKey === 'appearances'} asc={sortAsc} />
+              </th>
+              <th onClick={() => handleSort('wins')} style={{ cursor: 'pointer' }}>
+                {t.wins} <SortIcon active={sortKey === 'wins'} asc={sortAsc} />
+              </th>
+              <th onClick={() => handleSort('losses')} style={{ cursor: 'pointer' }}>
+                {t.losses} <SortIcon active={sortKey === 'losses'} asc={sortAsc} />
+              </th>
+              <th onClick={() => handleSort('winRate')} style={{ cursor: 'pointer' }}>
+                {t.winRate} <SortIcon active={sortKey === 'winRate'} asc={sortAsc} />
+              </th>
             </tr>
           </thead>
           <tbody>
-            {stats.map(s => (
+            {sortedStats.map(s => (
               <tr key={s.id}>
                 <td>{getName(s)}</td>
                 <td>{s.appearances}</td>
@@ -474,7 +579,7 @@ function PlayerStats({ stats, showIds, t }) {
         </table>
       ) : (
         <div className="stats-grid">
-          {stats.map(s => (
+          {sortedStats.map(s => (
             <div key={s.id} className="stat-card">
               <div className="stat-name">{getName(s)}</div>
               <div className="stat-row"><span className="stat-label">{t.appearances}</span><span className="stat-value">{s.appearances}</span></div>
@@ -502,12 +607,42 @@ export default function App() {
   const [bookingHash, setBookingHash] = useState(null)
   const [bookingUpdatedAt, setBookingUpdatedAt] = useState(null)
   const [bookingData0, setBookingData0] = useState(null)
+  const [bookingStatus, setBookingStatus] = useState(null)
   const [extra, setExtra] = useState('')
   const [playerTab, setPlayerTab] = useState('players')
   const [loading, setLoading] = useState(false)
+  const [fingerprint, setFingerprint] = useState(null)
   const bookingUpdatedAtRef = useRef(null)
 
+  useEffect(() => {
+    if (!fpPromise) {
+      fpPromise = FingerprintJS.load()
+    }
+    fpPromise.then(fp => fp.get()).then(result => {
+      setFingerprint(result.visitorId)
+    })
+  }, [])
+
   const t = I18N[lang]
+
+  const speakNextMatch = (teamA, teamB, roundNum) => {
+    const getName = (id) => {
+      const p = players.find(p => p.id === id)
+      return p ? p.name : ''
+    }
+    let text
+    if (lang === 'zh') {
+      text = `第${roundNum}场，A队${teamA.map(getName).join('选手、')}选手，对阵B队${teamB.map(getName).join('选手、')}选手。`
+    } else if (lang === 'ja') {
+      text = `第${roundNum}試合、ただいまより、試合を開始いたします。Aチーム、${teamA.map(getName).join('選手・')}。Bチーム、${teamB.map(getName).join('選手・')}。`
+    } else {
+      text = `Round ${roundNum}. Up next is the badminton doubles match. Team A: ${teamA.map(getName).join(' and ')}, versus Team B: ${teamB.map(getName).join(' and ')}.`
+    }
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = lang === 'zh' ? 'zh-CN' : lang === 'ja' ? 'ja-JP' : 'en-US'
+    utterance.rate = 0.9
+    window.speechSynthesis.speak(utterance)
+  }
 
   const restoreFromResp = (resp, isOrdered) => {
     if (!resp.hash) return false
@@ -525,6 +660,7 @@ export default function App() {
     setBookingHash(resp.hash)
     setBookingUpdatedAt(resp.updatedAt)
     setBookingData0(resp.data0 || null)
+    setBookingStatus(resp.status || null)
     const lastMatch = restoredHistory.length > 0 ? restoredHistory[restoredHistory.length - 1] : null
     const nextMatch = generateNextMatch(
       restoredPlayers, restoredHistory,
@@ -549,9 +685,11 @@ export default function App() {
   // keep ref in sync so polling can read latest value without stale closure
   useEffect(() => { bookingUpdatedAtRef.current = bookingUpdatedAt }, [bookingUpdatedAt])
 
+  const isBookingDone = bookingStatus === 'done'
+
   // auto-polling: refresh when another client updates the record
   useEffect(() => {
-    if (!bookingHash) return
+    if (!bookingHash || isBookingDone) return
     const id = setInterval(async () => {
       if (loading) return
       const resp = await apiGet(bookingHash)
@@ -560,7 +698,7 @@ export default function App() {
       }
     }, 10000)
     return () => clearInterval(id)
-  }, [bookingHash, ordered])
+      }, [bookingHash, ordered, isBookingDone])
 
   const handleParse = async (parsedPlayers, isOrdered, rawText, extraText) => {
     if (loading) return
@@ -572,6 +710,7 @@ export default function App() {
     setBookingHash(null)
     setBookingUpdatedAt(null)
     setBookingData0(null)
+    setBookingStatus(null)
     setExtra(extraText || '')
 
     const data0 = JSON.stringify({ players: rawText.trim(), type: isOrdered ? 'ordered' : 'random' })
@@ -582,7 +721,7 @@ export default function App() {
       data: JSON.stringify({ players: parsedPlayers, type: isOrdered ? 'ordered' : 'random', history: [], extra: extraText || '' }),
       ua: navigator.userAgent,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      fingerprint: navigator.userAgent + screen.width + screen.height,
+      fingerprint: fingerprint || (navigator.userAgent + screen.width + screen.height),
     })
 
     if (restoreFromResp(resp, isOrdered)) {
@@ -595,7 +734,7 @@ export default function App() {
   }
 
   const handleRecordResult = (result, score) => {
-    if (!currentMatch) return
+    if (!currentMatch || isBookingDone) return
     setCurrentMatch(prev => ({
       ...prev,
       result: result !== undefined ? result : prev.result,
@@ -616,7 +755,7 @@ export default function App() {
         data,
         ua: navigator.userAgent,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        fingerprint: navigator.userAgent + screen.width + screen.height,
+        fingerprint: fingerprint || (navigator.userAgent + screen.width + screen.height),
         hash: bookingHash,
         updatedAt: bookingUpdatedAt,
       })
@@ -626,7 +765,7 @@ export default function App() {
   }
 
   const handleNextMatch = async () => {
-    if (!currentMatch || loading) return
+    if (!currentMatch || loading || isBookingDone) return
     setLoading(true)
 
     const rested = players.map(p => p.id).filter(id => !currentMatch.onField.includes(id))
@@ -638,6 +777,7 @@ export default function App() {
       const newRound = round + 1
       setRound(newRound)
       setCurrentMatch({ round: newRound, ...nextMatch, result: null, score: '' })
+      speakNextMatch(nextMatch.teamA, nextMatch.teamB, newRound)
     }
 
     if (bookingHash && bookingUpdatedAt) {
@@ -648,7 +788,7 @@ export default function App() {
         data,
         ua: navigator.userAgent,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        fingerprint: navigator.userAgent + screen.width + screen.height,
+        fingerprint: fingerprint || (navigator.userAgent + screen.width + screen.height),
         hash: bookingHash,
         updatedAt: bookingUpdatedAt,
       })
@@ -691,6 +831,7 @@ export default function App() {
       {players.length > 0 && (
         <>
           <div className="card">
+            {bookingStatus === 'done' && <div style={{ background: '#ffcccc', padding: 8, marginBottom: 8, textAlign: 'center' }}>🔒 已完成，不可编辑</div>}
             <div className="card-header">
               <div style={{ display: 'flex', gap: 4 }}>
                 <button
@@ -733,9 +874,11 @@ export default function App() {
             showIds={showIds}
             loading={loading}
             t={t}
+            isDone={isBookingDone}
+            lang={lang}
           />
 
-          <MatchHistory players={players} history={history} onUpdateHistory={handleUpdateHistory} showIds={showIds} t={t} />
+          <MatchHistory players={players} history={history} onUpdateHistory={handleUpdateHistory} showIds={showIds} t={t} isDone={isBookingDone} />
 
           <PlayerStats stats={stats} showIds={showIds} t={t} />
         </>
